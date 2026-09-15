@@ -18,14 +18,9 @@ st.set_page_config(
     layout="wide"
 )
 
-
 st.title("📈 Sales Forecasting Dashboard")
 st.markdown("### Store Sales Prediction using Machine Learning")
 
-
-# ==============================
-# LOAD DATA
-# ==============================
 
 @st.cache_data
 def load_data():
@@ -57,83 +52,24 @@ def load_data():
     return df
 
 
-df = load_data()
+@st.cache_data
+def prepare_data(store, family):
 
+    df = load_data()
 
-# ==============================
-# SIDEBAR
-# ==============================
+    df = df[
+        (df["store_nbr"] == store) &
+        (df["family"] == family)
+    ].copy()
 
-st.sidebar.header("Prediction Settings")
+    df["dayofweek"] = df["Date"].dt.dayofweek
+    df["month"] = df["Date"].dt.month
+    df["year"] = df["Date"].dt.year
+    df["lag_1"] = df["Sales"].shift(1)
+    df["lag_7"] = df["Sales"].shift(7)
+    df["rolling_mean_7"] = df["Sales"].rolling(7).mean()
 
-
-stores = sorted(df["store_nbr"].unique())
-
-families = sorted(df["family"].unique())
-
-
-store = st.sidebar.selectbox(
-    "Select Store",
-    stores
-)
-
-
-family = st.sidebar.selectbox(
-    "Select Product Family",
-    families
-)
-
-
-st.sidebar.header("Project Settings")
-
-st.sidebar.write(f"Store: {store}")
-
-st.sidebar.write(f"Product Family: {family}")
-
-
-# ==============================
-# SELECTED DATA
-# ==============================
-
-selected_df = df[
-    (df["store_nbr"] == store) &
-    (df["family"] == family)
-].copy()
-
-
-# ==============================
-# FEATURE ENGINEERING
-# ==============================
-
-model_df = selected_df.copy()
-
-
-model_df["dayofweek"] = (
-    model_df["Date"].dt.dayofweek
-)
-
-model_df["month"] = (
-    model_df["Date"].dt.month
-)
-
-model_df["year"] = (
-    model_df["Date"].dt.year
-)
-
-model_df["lag_1"] = (
-    model_df["Sales"].shift(1)
-)
-
-model_df["lag_7"] = (
-    model_df["Sales"].shift(7)
-)
-
-model_df["rolling_mean_7"] = (
-    model_df["Sales"].rolling(7).mean()
-)
-
-
-model_df = model_df.dropna()
+    return df.dropna()
 
 
 features = [
@@ -146,9 +82,69 @@ features = [
 ]
 
 
-# ==============================
-# RUN FORECASTING MODEL
-# ==============================
+@st.cache_resource
+def train_models(store, family):
+
+    df = prepare_data(store, family)
+
+    if len(df) < 20:
+        return None
+
+    lr = LinearRegression()
+
+    rf = RandomForestRegressor(
+        n_estimators=50,
+        random_state=42,
+        n_jobs=-1
+    )
+
+    xg = xgb.XGBRegressor(
+        n_estimators=100,
+        learning_rate=0.1,
+        random_state=42,
+        n_jobs=-1
+    )
+
+    lr.fit(df[features], df["Sales"])
+    rf.fit(df[features], df["Sales"])
+    xg.fit(df[features], df["Sales"])
+
+    return lr, rf, xg
+
+
+df = load_data()
+
+
+st.sidebar.header("Prediction Settings")
+
+stores = sorted(df["store_nbr"].unique())
+families = sorted(df["family"].unique())
+
+store = st.sidebar.selectbox(
+    "Select Store",
+    stores
+)
+
+family = st.sidebar.selectbox(
+    "Select Product Family",
+    families
+)
+
+
+st.sidebar.header("Project Settings")
+
+st.sidebar.write(f"Store: {store}")
+st.sidebar.write(f"Product Family: {family}")
+
+
+selected_df = df[
+    (df["store_nbr"] == store) &
+    (df["family"] == family)
+].copy()
+
+
+model_df = prepare_data(store, family)
+
 
 if st.sidebar.button("Run Forecasting Model"):
 
@@ -168,7 +164,6 @@ if st.sidebar.button("Run Forecasting Model"):
             model_df["Date"] >= "2017-01-01"
         ]
 
-
         if len(train) == 0 or len(test) == 0:
 
             st.error(
@@ -178,72 +173,21 @@ if st.sidebar.button("Run Forecasting Model"):
         else:
 
             X_train = train[features]
-
             y_train = train["Sales"]
 
             X_test = test[features]
-
             y_test = test["Sales"]
 
 
-            # ==============================
-            # LINEAR REGRESSION
-            # ==============================
+            models = train_models(store, family)
 
-            lr = LinearRegression()
-
-            lr.fit(
-                X_train,
-                y_train
-            )
-
-            lr_pred = lr.predict(
-                X_test
-            )
+            lr, rf, xg = models
 
 
-            # ==============================
-            # RANDOM FOREST
-            # ==============================
+            lr_pred = lr.predict(X_test)
+            rf_pred = rf.predict(X_test)
+            xgb_pred = xg.predict(X_test)
 
-            rf = RandomForestRegressor(
-                n_estimators=100,
-                random_state=42
-            )
-
-            rf.fit(
-                X_train,
-                y_train
-            )
-
-            rf_pred = rf.predict(
-                X_test
-            )
-
-
-            # ==============================
-            # XGBOOST
-            # ==============================
-
-            xg = xgb.XGBRegressor(
-                n_estimators=200,
-                learning_rate=0.1,
-                random_state=42
-            )
-
-            xg.fit(
-                X_train,
-                y_train
-            )
-
-            xgb_pred = xg.predict(
-                X_test
-            )
-
-
-            # ==============================
-            # ENSEMBLE
-            # ==============================
 
             final_pred = (
                 lr_pred +
@@ -256,10 +200,6 @@ if st.sidebar.button("Run Forecasting Model"):
                 "Models trained successfully!"
             )
 
-
-            # ==============================
-            # MODEL PERFORMANCE
-            # ==============================
 
             st.header("📊 Model Performance")
 
@@ -274,7 +214,6 @@ if st.sidebar.button("Run Forecasting Model"):
                 ],
 
                 "MAE": [
-
                     mean_absolute_error(
                         y_test,
                         lr_pred
@@ -297,7 +236,6 @@ if st.sidebar.button("Run Forecasting Model"):
                 ],
 
                 "RMSE": [
-
                     np.sqrt(
                         mean_squared_error(
                             y_test,
@@ -338,19 +276,12 @@ if st.sidebar.button("Run Forecasting Model"):
             )
 
 
-            # ==============================
-            # ACTUAL VS PREDICTED
-            # ==============================
-
-            st.header(
-                "📈 Actual vs Predicted Sales"
-            )
+            st.header("📈 Actual vs Predicted Sales")
 
 
             fig, ax = plt.subplots(
                 figsize=(12, 5)
             )
-
 
             ax.plot(
                 test["Date"],
@@ -358,35 +289,24 @@ if st.sidebar.button("Run Forecasting Model"):
                 label="Actual"
             )
 
-
             ax.plot(
                 test["Date"],
                 xgb_pred,
                 label="XGBoost"
             )
 
-
             ax.set_title(
                 "Actual vs Predicted Sales"
             )
 
             ax.set_xlabel("Date")
-
             ax.set_ylabel("Sales")
-
             ax.legend()
-
 
             st.pyplot(fig)
 
 
-            # ==============================
-            # FEATURE IMPORTANCE
-            # ==============================
-
-            st.header(
-                "🤖 Feature Importance"
-            )
+            st.header("🤖 Feature Importance")
 
 
             importance = pd.Series(
@@ -399,40 +319,29 @@ if st.sidebar.button("Run Forecasting Model"):
                 figsize=(8, 5)
             )
 
-
             importance.plot(
                 kind="barh",
                 ax=ax
             )
 
-
             ax.set_title(
                 "XGBoost Feature Importance"
             )
 
-
             st.pyplot(fig)
 
 
-            # ==============================
-            # MODEL COMPARISON
-            # ==============================
-
-            st.header(
-                "📊 Model Comparison"
-            )
+            st.header("📊 Model Comparison")
 
 
             fig, ax = plt.subplots(
                 figsize=(8, 5)
             )
 
-
             ax.bar(
                 results["Model"],
                 results["MAE"]
             )
-
 
             ax.set_title(
                 "Model Comparison - MAE"
@@ -440,28 +349,17 @@ if st.sidebar.button("Run Forecasting Model"):
 
             ax.set_ylabel("MAE")
 
-
-            plt.xticks(
-                rotation=20
-            )
-
+            plt.xticks(rotation=20)
 
             st.pyplot(fig)
 
 
-            # ==============================
-            # CORRELATION
-            # ==============================
-
-            st.header(
-                "🔥 Feature Correlation"
-            )
+            st.header("🔥 Feature Correlation")
 
 
             fig, ax = plt.subplots(
                 figsize=(9, 6)
             )
-
 
             sns.heatmap(
                 model_df[
@@ -471,22 +369,14 @@ if st.sidebar.button("Run Forecasting Model"):
                 ax=ax
             )
 
-
             ax.set_title(
                 "Feature Correlation"
             )
 
-
             st.pyplot(fig)
 
 
-            # ==============================
-            # PROPHET FORECAST
-            # ==============================
-
-            st.header(
-                "🔮 30-Day Forecast"
-            )
+            st.header("🔮 30-Day Forecast")
 
 
             prophet_df = model_df[
@@ -500,7 +390,6 @@ if st.sidebar.button("Run Forecasting Model"):
 
 
             prophet_model = Prophet()
-
 
             prophet_model.fit(
                 prophet_df
@@ -537,17 +426,10 @@ if st.sidebar.button("Run Forecasting Model"):
                 forecast
             )
 
-
             st.pyplot(fig)
 
 
-            # ==============================
-            # RECENT DATA
-            # ==============================
-
-            st.header(
-                "📋 Recent Sales Data"
-            )
+            st.header("📋 Recent Sales Data")
 
 
             st.dataframe(
@@ -563,11 +445,7 @@ else:
         "then click 'Run Forecasting Model'."
     )
 
-
-    st.subheader(
-        "Dataset Preview"
-    )
-
+    st.subheader("Dataset Preview")
 
     st.dataframe(
         selected_df.head(10),
@@ -575,17 +453,9 @@ else:
     )
 
 
-# ==================================================
-# USER PREDICTION
-# ==================================================
-
 st.divider()
 
-
-st.header(
-    "🔮 Predict Your Own Sales"
-)
-
+st.header("🔮 Predict Your Own Sales")
 
 st.write(
     f"Prediction for Store {store} - {family}"
@@ -618,161 +488,63 @@ average_sales = st.number_input(
 )
 
 
-if st.button(
-    "🔮 Predict Sales"
-):
+if st.button("🔮 Predict Sales"):
 
-    # ==============================
-    # CREATE INPUT
-    # ==============================
-
-    date_value = pd.to_datetime(
-        prediction_date
-    )
-
-
-    dayofweek = date_value.dayofweek
-
-    month = date_value.month
-
-    year = date_value.year
-
-
-    X = pd.DataFrame({
-
-        "dayofweek": [dayofweek],
-
-        "month": [month],
-
-        "year": [year],
-
-        "lag_1": [previous_sales],
-
-        "lag_7": [sales_7_days],
-
-        "rolling_mean_7": [average_sales]
-    })
-
-
-    # ==============================
-    # TRAINING DATA
-    # ==============================
-
-    prediction_df = selected_df.copy()
-
-
-    prediction_df["dayofweek"] = (
-        prediction_df["Date"].dt.dayofweek
-    )
-
-
-    prediction_df["month"] = (
-        prediction_df["Date"].dt.month
-    )
-
-
-    prediction_df["year"] = (
-        prediction_df["Date"].dt.year
-    )
-
-
-    prediction_df["lag_1"] = (
-        prediction_df["Sales"].shift(1)
-    )
-
-
-    prediction_df["lag_7"] = (
-        prediction_df["Sales"].shift(7)
-    )
-
-
-    prediction_df["rolling_mean_7"] = (
-        prediction_df["Sales"].rolling(7).mean()
-    )
-
-
-    prediction_df = (
-        prediction_df.dropna()
-    )
-
-
-    # ==============================
-    # CHECK DATA
-    # ==============================
-
-    if len(prediction_df) < 20:
+    if len(model_df) < 20:
 
         st.error(
-            "Not enough historical data "
-            "for this Store and Product Family."
+            "Not enough historical data."
         )
 
     else:
 
-        # ==============================
-        # LINEAR REGRESSION
-        # ==============================
+        models = train_models(
+            store,
+            family
+        )
 
-        lr = LinearRegression()
+        lr, rf, xg = models
 
 
-        lr.fit(
-            prediction_df[features],
-            prediction_df["Sales"]
+        date_value = pd.to_datetime(
+            prediction_date
         )
 
 
-        lr_prediction = (
-            lr.predict(X)[0]
-        )
+        X = pd.DataFrame({
+
+            "dayofweek": [
+                date_value.dayofweek
+            ],
+
+            "month": [
+                date_value.month
+            ],
+
+            "year": [
+                date_value.year
+            ],
+
+            "lag_1": [
+                previous_sales
+            ],
+
+            "lag_7": [
+                sales_7_days
+            ],
+
+            "rolling_mean_7": [
+                average_sales
+            ]
+        })
 
 
-        # ==============================
-        # RANDOM FOREST
-        # ==============================
+        lr_prediction = lr.predict(X)[0]
 
-        rf = RandomForestRegressor(
-            n_estimators=100,
-            random_state=42
-        )
+        rf_prediction = rf.predict(X)[0]
 
+        xgb_prediction = xg.predict(X)[0]
 
-        rf.fit(
-            prediction_df[features],
-            prediction_df["Sales"]
-        )
-
-
-        rf_prediction = (
-            rf.predict(X)[0]
-        )
-
-
-        # ==============================
-        # XGBOOST
-        # ==============================
-
-        xg = xgb.XGBRegressor(
-            n_estimators=200,
-            learning_rate=0.1,
-            random_state=42
-        )
-
-
-        xg.fit(
-            prediction_df[features],
-            prediction_df["Sales"]
-        )
-
-
-        xgb_prediction = (
-            xg.predict(X)[0]
-        )
-
-
-        # ==============================
-        # ENSEMBLE
-        # ==============================
 
         ensemble_prediction = (
             lr_prediction +
@@ -786,18 +558,12 @@ if st.button(
         )
 
 
-        # ==============================
-        # RESULTS
-        # ==============================
-
         st.subheader(
             "📊 Prediction Results"
         )
 
 
-        col1, col2, col3, col4 = (
-            st.columns(4)
-        )
+        col1, col2, col3, col4 = st.columns(4)
 
 
         col1.metric(
@@ -819,7 +585,7 @@ if st.button(
 
 
         col4.metric(
-            "Ensemble",
+            "Ensemble Prediction",
             f"{ensemble_prediction:,.2f}"
         )
 
@@ -837,10 +603,6 @@ if st.button(
             f"{ensemble_prediction:,.2f}"
         )
 
-
-        # ==============================
-        # DOWNLOAD
-        # ==============================
 
         result = pd.DataFrame({
 

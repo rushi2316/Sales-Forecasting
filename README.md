@@ -15,7 +15,7 @@
 
 **Live Streamlit App:**
 
-PASTE_YOUR_STREAMLIT_URL_HERE
+https://sales-forecasting-4n9xw4iyax72hx9sen89y5.streamlit.app/
 
 ### 💻 Source Code
 
